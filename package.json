@@ -12,7 +12,10 @@
   "homepage": "https://claudeusage.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/bazarkua/claudeusage-sync.git"
+    "url": "git+https://github.com/bazarkua/claudeusage-sync.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bazarkua/claudeusage-sync/issues"
   },
   "license": "MIT",
   "author": "bazarkua",
