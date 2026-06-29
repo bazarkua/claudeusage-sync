@@ -2,9 +2,9 @@
 
 Turn your local Claude Code usage into a public profile and leaderboard at [claudeusage.com](https://claudeusage.com) — without uploading a single prompt.
 
-[![npm version](https://img.shields.io/npm/v/claudeusage-sync.svg)](https://www.npmjs.com/package/claudeusage-sync)
-[![license: MIT](https://img.shields.io/npm/l/claudeusage-sync.svg)](./LICENSE)
-[![node](https://img.shields.io/node/v/claudeusage-sync.svg)](https://nodejs.org)
+[![version](https://img.shields.io/github/package-json/v/bazarkua/claudeusage-sync?label=version)](https://www.npmjs.com/package/claudeusage-sync)
+[![license: MIT](https://img.shields.io/github/license/bazarkua/claudeusage-sync)](./LICENSE)
+[![node](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 
 ```sh
 npx claudeusage-sync
