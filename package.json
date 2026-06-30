@@ -25,7 +25,7 @@
   },
   "main": "./dist/cli.js",
   "bin": {
-    "claudeusage-sync": "./bin/cli.js"
+    "claudeusage-sync": "bin/cli.js"
   },
   "files": [
     "dist/",
