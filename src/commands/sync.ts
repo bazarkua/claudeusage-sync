@@ -3,11 +3,14 @@ import ora from "ora";
 
 import { buildPayload, latestWatermark } from "../aggregate/payload.js";
 import {
+  type Coverage,
+  getCoverage,
   IngestConflict,
   NeedsReauth,
   postIngest,
   RateLimited,
 } from "../api/ingest-client.js";
+import { computeMachineId } from "../auth/machine.js";
 import {
   deleteConfig,
   readConfig,
@@ -258,6 +261,17 @@ export async function runSync(options: SyncOptions): Promise<void> {
   }
 
   if (payload.dailyBuckets.length === 0) {
+    // The local watermark filtered everything out — but it may be STALE (e.g. the
+    // account was deleted + recreated, so the server actually has nothing). Before
+    // declaring "nothing to do", reconcile against the server's real coverage so a
+    // plain `claudeusage-sync` self-heals and restores the full history with no
+    // flag. Skipped for headless --token runs (must never pop a browser) and the
+    // explicit --since / --full paths, which already choose the window themselves.
+    if (token && config && !options.full && !options.since && !options.token) {
+      await reconcileEmptyPayload(base, token, config, allRecords);
+      return;
+    }
+
     console.log(chalk.yellow("no new Claude Code usage records to sync."));
     if (config) {
       await writeConfig(config);
@@ -297,4 +311,122 @@ export async function runSync(options: SyncOptions): Promise<void> {
   });
 
   console.log(chalk.bold("\nprofile:"), chalk.hex("#d97757")(`${base}/dashboard`));
+}
+
+// Reached when the local watermark says there is nothing new to upload. The
+// watermark can be STALE — most importantly after the account was deleted and
+// recreated, where the server now holds nothing but the old watermark still hides
+// the entire history. We probe the server's real coverage and, if it is behind,
+// re-upload exactly the missing window (the full history for a fresh account),
+// anchored on the per-machine ingest frontier so the overlap guard never trips.
+async function reconcileEmptyPayload(
+  base: string,
+  token: string,
+  config: Config,
+  allRecords: RawRecord[],
+): Promise<void> {
+  const machineId = computeMachineId();
+  let activeToken = token;
+
+  const probe = ora("checking the server for your synced history...").start();
+  let coverage: Coverage;
+
+  try {
+    coverage = await getCoverage(base, activeToken, machineId);
+    probe.stop();
+  } catch (error) {
+    if (error instanceof NeedsReauth) {
+      // Token rejected: the account was deleted/recreated, or the token was
+      // revoked. Re-authorize, then RE-PROBE with the fresh token so we upload
+      // only what the (possibly brand-new) account is missing — never a blind
+      // full re-upload, which would double-count an account that still has data.
+      probe.warn("sync token no longer valid; re-authorizing");
+      await deleteConfig();
+      activeToken = await runDeviceFlow(base);
+      coverage = await getCoverage(base, activeToken, machineId);
+    } else if (error instanceof RateLimited) {
+      probe.info("server busy; skipping the history check this run");
+      await persistNoop(base, config, activeToken, allRecords);
+      return;
+    } else {
+      // 404 (older server without this endpoint) / 5xx / network — never break a
+      // routine no-op sync over a failed reconcile.
+      probe.warn("could not verify server coverage; skipping the history check");
+      await persistNoop(base, config, activeToken, allRecords);
+      return;
+    }
+  }
+
+  const frontier = coverage.machineWindowEnd;
+  let resyncRecords: RawRecord[];
+
+  if (!coverage.hasData) {
+    // Empty account (the fresh-after-delete case) → send the entire history.
+    resyncRecords = frontier
+      ? allRecords.filter((record) => record.timestamp > frontier)
+      : allRecords;
+  } else if (!frontier) {
+    // Account already holds data but this machine has no ingest frontier (e.g.
+    // the data came from another machine). Uploading could double-count, so no-op.
+    await persistNoop(base, config, activeToken, allRecords);
+    return;
+  } else {
+    resyncRecords = allRecords.filter((record) => record.timestamp > frontier);
+  }
+
+  const resyncDeduped = dedupe(resyncRecords);
+  const resyncPayload = buildPayload(resyncDeduped, packageInfo.version);
+
+  if (resyncPayload.dailyBuckets.length === 0) {
+    // Server is already caught up with this machine — a genuine no-op.
+    await persistNoop(base, config, activeToken, allRecords);
+    return;
+  }
+
+  console.log(
+    chalk.cyan(
+      `server is missing history — restoring ${resyncPayload.dailyBuckets.length} day-buckets.`,
+    ),
+  );
+
+  const writableConfig: Config = { ...config, apiBase: base, token: activeToken };
+
+  if (!writableConfig.consentAcceptedAt) {
+    printUploadNotice(resyncPayload.dailyBuckets.length, resyncPayload.sessionCount);
+    writableConfig.consentAcceptedAt = new Date().toISOString();
+  }
+
+  await writeConfig(writableConfig);
+
+  const finalToken = await uploadWithReauth(
+    base,
+    activeToken,
+    resyncPayload,
+    allRecords,
+    packageInfo.version,
+  );
+  const watermark = latestWatermark(resyncDeduped);
+
+  await writeConfig({
+    ...writableConfig,
+    ...watermark,
+    apiBase: base,
+    token: finalToken,
+  });
+
+  console.log(chalk.bold("\nprofile:"), chalk.hex("#d97757")(`${base}/dashboard`));
+}
+
+// Genuine "nothing to do": print the message and persist config with the latest
+// local record as the watermark (and any refreshed token), so the next run filters
+// from the right place even if we just re-authorized.
+async function persistNoop(
+  base: string,
+  config: Config,
+  token: string,
+  allRecords: RawRecord[],
+): Promise<void> {
+  console.log(chalk.yellow("no new Claude Code usage records to sync."));
+  const watermark = latestWatermark(dedupe(allRecords));
+  await writeConfig({ ...config, ...watermark, apiBase: base, token });
 }

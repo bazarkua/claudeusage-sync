@@ -15,6 +15,14 @@ const ingestResponseSchema = z.object({
 
 export type IngestResult = z.infer<typeof ingestResponseSchema>;
 
+const coverageResponseSchema = z.object({
+  accountWindowEnd: z.string().nullable(),
+  hasData: z.boolean(),
+  machineWindowEnd: z.string().nullable(),
+});
+
+export type Coverage = z.infer<typeof coverageResponseSchema>;
+
 export class NeedsReauth extends Error {
   constructor() {
     super("needs_reauth");
@@ -80,4 +88,39 @@ export async function postIngest(
   }
 
   return ingestResponseSchema.parse(await response.json());
+}
+
+// Read-only probe of what the server already has for this account/machine, used to
+// reconcile a possibly-stale local watermark before declaring "nothing to sync".
+// Reuses the NeedsReauth / RateLimited contract so callers funnel a rejected token
+// into the same re-auth path as ingest.
+export async function getCoverage(
+  apiBase: string,
+  token: string,
+  machineId: string,
+): Promise<Coverage> {
+  const response = await fetch(
+    `${apiBase}/api/coverage?machineId=${encodeURIComponent(machineId)}`,
+    {
+      headers: { authorization: `Bearer ${token}` },
+      method: "GET",
+    },
+  );
+
+  if (response.status === 401) {
+    throw new NeedsReauth();
+  }
+
+  if (response.status === 429) {
+    const retryAfterSec = Number(response.headers.get("retry-after") ?? "60");
+    throw new RateLimited(Number.isFinite(retryAfterSec) ? retryAfterSec : 60);
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `coverage failed: ${response.status} ${await response.text().catch(() => "")}`,
+    );
+  }
+
+  return coverageResponseSchema.parse(await response.json());
 }
