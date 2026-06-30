@@ -25,7 +25,7 @@ import type { RawRecord } from "../parse/jsonl.js";
 import { streamAllRecords } from "../parse/jsonl.js";
 import { resolveClaudeDir } from "../parse/paths.js";
 
-const DEFAULT_API = "https://claudeusage.com";
+const DEFAULT_API = "https://www.claudeusage.com";
 const packageInfo = readPackageInfo(import.meta.url);
 
 export type SyncOptions = {
