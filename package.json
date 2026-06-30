@@ -1,6 +1,6 @@
 {
   "name": "claudeusage-sync",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Sync your Claude Code usage stats to claudeusage.com",
   "keywords": [
     "claude",

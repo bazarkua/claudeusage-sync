@@ -58,13 +58,18 @@ export async function runDeviceFlow(apiBase: string): Promise<string> {
   const start = startResponseSchema.parse(await startResponse.json());
 
   console.log("");
-  console.log(chalk.bold("authorize this device:"));
+  console.log(chalk.bold("authorize this device — open this link:"));
   console.log(`  ${chalk.hex("#d97757")(start.verificationUriComplete)}`);
   console.log("");
   console.log(
-    `${chalk.gray("if the browser does not open, enter code")} ${chalk.bold(
-      start.userCode,
-    )} ${chalk.gray("at")} ${start.verificationUri}`,
+    chalk.gray(
+      "it should open in your browser automatically. if it didn't, copy the link above.",
+    ),
+  );
+  console.log(
+    `${chalk.gray("on another device? go to")} ${start.verificationUri} ${chalk.gray(
+      "and enter code",
+    )} ${chalk.bold(start.userCode)}`,
   );
   console.log("");
 
