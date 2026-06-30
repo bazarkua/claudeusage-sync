@@ -26,6 +26,10 @@ program
   )
   .option("--dry-run", "parse and build the payload but do not upload")
   .option("--since <date>", "only read records newer than this YYYY-MM-DD")
+  .option(
+    "--full",
+    "ignore the local watermark and re-upload your entire history (use after deleting + recreating your account)",
+  )
   .action((options: SyncOptions) => {
     runSync(options).catch(handleError);
   });

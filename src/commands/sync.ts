@@ -30,6 +30,7 @@ const packageInfo = readPackageInfo(import.meta.url);
 
 export type SyncOptions = {
   dryRun?: boolean;
+  full?: boolean;
   since?: string;
   token?: string;
 };
@@ -128,6 +129,8 @@ async function uploadWithReauth(
   base: string,
   token: string,
   payload: ReturnType<typeof buildPayload>,
+  allRecords: RawRecord[],
+  version: string,
 ): Promise<string> {
   const upload = ora(`uploading ${payload.dailyBuckets.length} day-buckets...`).start();
 
@@ -141,17 +144,40 @@ async function uploadWithReauth(
     return token;
   } catch (error) {
     if (error instanceof NeedsReauth) {
-      upload.warn("token rejected; re-running device authorization");
+      upload.warn("token rejected; re-authorizing and re-uploading full history");
       await deleteConfig();
       const freshToken = await runDeviceFlow(base);
-      const result = await postIngest(base, freshToken, payload);
-      console.log(
-        chalk.green(
-          result.duplicate
-            ? "already synced after re-auth; duplicate upload ignored"
-            : `synced after re-auth (${result.newRecords} day-buckets, ${result.messageCount} messages)`,
-        ),
-      );
+      // A rejected token means the account was reset/recreated, so it holds no
+      // prior data. Send the FULL history — not just the window after the old
+      // watermark, which would drop everything before the last sync. If the
+      // account actually still has data (e.g. only the token was revoked), the
+      // server rejects the overlap and we fall back to the incremental payload.
+      const fullPayload = buildPayload(dedupe(allRecords), version);
+
+      try {
+        const result = await postIngest(base, freshToken, fullPayload);
+        console.log(
+          chalk.green(
+            result.duplicate
+              ? "already synced after re-auth; duplicate upload ignored"
+              : `synced full history after re-auth (${result.newRecords} day-buckets, ${result.messageCount} messages)`,
+          ),
+        );
+      } catch (reError) {
+        if (reError instanceof IngestConflict && reError.code === "ingest_overlap") {
+          const result = await postIngest(base, freshToken, payload);
+          console.log(
+            chalk.green(
+              result.duplicate
+                ? "already synced after re-auth; duplicate upload ignored"
+                : `synced after re-auth (${result.newRecords} day-buckets, ${result.messageCount} messages)`,
+            ),
+          );
+        } else {
+          throw reError;
+        }
+      }
+
       return freshToken;
     }
 
@@ -204,7 +230,11 @@ export async function runSync(options: SyncOptions): Promise<void> {
     filtered = allRecords.filter(
       (record) => new Date(record.timestamp).getTime() >= cutoff,
     );
-  } else if (config) {
+  } else if (config && !options.full) {
+    // --full ignores the local watermark and re-sends the entire history. This
+    // is the recovery path after deleting + recreating an account: an ordinary
+    // incremental sync would only upload the window after the old watermark
+    // (often just the last day) to the brand-new, empty account.
     filtered = allRecords.filter((record) => afterWatermark(record, config));
   }
 
@@ -250,7 +280,13 @@ export async function runSync(options: SyncOptions): Promise<void> {
 
   await writeConfig(writableConfig);
 
-  const finalToken = await uploadWithReauth(base, token, payload);
+  const finalToken = await uploadWithReauth(
+    base,
+    token,
+    payload,
+    allRecords,
+    packageInfo.version,
+  );
   const watermark = latestWatermark(deduped);
 
   await writeConfig({
