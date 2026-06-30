@@ -1,6 +1,5 @@
 import chalk from "chalk";
 import ora from "ora";
-import { createInterface } from "node:readline/promises";
 
 import { buildPayload, latestWatermark } from "../aggregate/payload.js";
 import {
@@ -80,30 +79,21 @@ async function readRecords(): Promise<RawRecord[]> {
   return records;
 }
 
-async function confirmConsent(dayCount: number, sessionCount: number) {
-  if (process.env.CLAUDEUSAGE_ASSUME_YES === "1") {
-    return true;
-  }
-
+// Shown once, on the first sync — transparency, not a question. Authorization
+// already happened in the browser device-approval step, so there's nothing to
+// answer here; the CLI just states exactly what it uploads and proceeds.
+function printUploadNotice(dayCount: number, sessionCount: number) {
   console.log("");
-  console.log(chalk.bold("first-time sync - what will be uploaded:"));
+  console.log(chalk.bold("uploading aggregate usage only:"));
   console.log(`  ${dayCount} day-buckets across ${sessionCount} sessions`);
   console.log("  numeric totals only: tokens, hours, and message counts");
   console.log(
-    `  ${chalk.gray(
-      "no prompts, responses, file paths, project names, or raw JSONL files are uploaded",
-    )}`,
+    chalk.gray(
+      "  never uploaded: prompts, responses, file paths, project names, or raw files",
+    ),
   );
-  console.log(`  ${chalk.gray("privacy: https://claudeusage.com/privacy")}`);
+  console.log(chalk.gray("  privacy: https://claudeusage.com/privacy"));
   console.log("");
-
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const answer = (await rl.question(chalk.bold("send aggregates? [y/N] ")))
-    .trim()
-    .toLowerCase();
-  rl.close();
-
-  return answer === "y" || answer === "yes";
 }
 
 function printDryRun(payload: ReturnType<typeof buildPayload>, records: number) {
@@ -254,13 +244,7 @@ export async function runSync(options: SyncOptions): Promise<void> {
   writableConfig.token = token;
 
   if (!writableConfig.consentAcceptedAt) {
-    const ok = await confirmConsent(payload.dailyBuckets.length, payload.sessionCount);
-
-    if (!ok) {
-      console.log(chalk.yellow("aborted by user."));
-      return;
-    }
-
+    printUploadNotice(payload.dailyBuckets.length, payload.sessionCount);
     writableConfig.consentAcceptedAt = new Date().toISOString();
   }
 
